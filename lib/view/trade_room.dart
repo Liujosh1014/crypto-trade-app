@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../tools/pnl_calculator.dart';
 import '../tools/position_tracker.dart';
 import '../main.dart'; // 確保獲取全域 positionTracker
+import '../data/auth_service.dart'; // 用於登出功能
 
 class TradeRoom extends StatefulWidget {
   const TradeRoom({super.key});
@@ -11,30 +12,46 @@ class TradeRoom extends StatefulWidget {
 }
 
 class _TradeRoomState extends State<TradeRoom> {
+  @override
+  void initState() {
+    super.initState();
+
+    // 當交易室畫面一建立，立刻通知全域 tracker 去 Firebase 抓取這個使用者的資產與持倉！
+    // WidgetsBinding 的目的是確保畫面首幀渲染後才執行非同步載入，安全不卡頓
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      positionTracker.loadUserData();
+    });
+  }
+
   // 直接拿全域的 priceStream
   late final Stream<double> priceStream = positionTracker.priceStream;
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // 在 trade_room.dart 頂部的 AppBar 區塊加入 IconButton：
       appBar: AppBar(
         title: const Text("BTCUSDT 永續合約模擬"),
         actions: [
-          // 餘額局部更新
           ListenableBuilder(
             listenable: positionTracker,
             builder: (context, _) {
               return Center(
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 16.0),
-                  child: Text(
-                    "餘額: ${positionTracker.money.toStringAsFixed(2)} USDT",
-                    style: const TextStyle(color: Colors.amber, fontSize: 16),
-                  ),
+                child: Text(
+                  "餘額: ${positionTracker.money.toStringAsFixed(2)} USDT",
+                  style: const TextStyle(color: Colors.amber, fontSize: 16),
                 ),
               );
             },
           ),
+          // 新增：登出按鈕
+          IconButton(
+            icon: const Icon(Icons.logout, color: Colors.grey),
+            onPressed: () async {
+              await AuthService().signOut();
+            },
+          ),
+          const SizedBox(width: 8),
         ],
       ),
       body: Column(

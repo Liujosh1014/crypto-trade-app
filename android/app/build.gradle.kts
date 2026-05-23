@@ -3,6 +3,8 @@ plugins {
     id("kotlin-android")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+    // 1. 保留這一行，這能讓 google-services.json 機制順利啟動！
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -42,3 +44,9 @@ android {
 flutter {
     source = "../.."
 }
+
+// 告訴 Java 編譯器，在編譯時印出棄用 API 的詳細檔案與行數
+tasks.withType<JavaCompile>().configureEach {
+    options.compilerArgs.add("-Xlint:deprecation")
+}
+// 提示：我們把 dependencies 區塊拿掉了，完全交給 Flutter 的 pubspec.yaml 自動管理，這樣最安全！

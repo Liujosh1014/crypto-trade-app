@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
-import 'view/trade_room.dart';
+import 'package:firebase_core/firebase_core.dart'; // 導入 Firebase 核心
+import 'view/auth_wrapper.dart'; // 導入剛寫好的分流層
 import 'tools/position_tracker.dart';
 import 'data/websocket_manager.dart';
 
-// 全域實例
 final WebSocketManager sharedWs = WebSocketManager();
 final PositionTracker positionTracker = PositionTracker(sharedWs);
 
-void main() {
-  // 1. 確保 Flutter 核心元件完成初始化（涉及非同步連線時必加）
+void main() async {
+  // 1. 改為 async
+  // 2. 確保 Flutter 元件初始化完成
   WidgetsFlutterBinding.ensureInitialized();
 
-  // 2. 灌入靈魂！在這裡立刻呼叫連線，讓 WebSocket 開始跑
+  // 3. 啟動 Firebase 連線
+  await Firebase.initializeApp();
+
+  // 4. 開啟 WebSocket
   sharedWs.connect();
 
   runApp(const MainApp());
@@ -24,8 +28,8 @@ class MainApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(), // 交易軟體通常用深色模式比較專業
-      home: const TradeRoom(),
+      theme: ThemeData.dark(),
+      home: const AuthWrapper(), // 5. 改由 AuthWrapper 決定進入哪個畫面
     );
   }
 }
