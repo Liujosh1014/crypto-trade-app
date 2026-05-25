@@ -4,49 +4,53 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 
 class WebSocketManager {
   WebSocketChannel? _channel;
-  final StreamController<double> _controller =
-      StreamController<double>.broadcast();
 
-  // 1. 修改：新增目前訂閱的幣種變數，預設為 BTCUSDT
-  String _currentSymbol = "BTCUSDT";
+  // 修改：改為廣播價格字典對照表，讓全網同時獲取 BTC、ETH、SOL 的跳動價格
+  final StreamController<Map<String, double>> _controller =
+      StreamController<Map<String, double>>.broadcast();
 
-  // 2. 新增：標記是否為「手動切換中」，避免重連邏輯打架
-  bool _isManuallySwitching = false;
+  // 系統支援的幣種清單（小寫形式供幣安串流識別）
+  final List<String> _symbols = ["btcusdt", "ethusdt", "solusdt"];
+  final Map<String, double> _latestPrices = {
+    "BTCUSDT": 0.0,
+    "ETHUSDT": 0.0,
+    "SOLUSDT": 0.0,
+  };
 
-  Stream<double> get priceStream => _controller.stream;
+  Stream<Map<String, double>> get priceMapStream => _controller.stream;
 
   void connect() {
-    // 安全防護：如果既有連線還在，先將其關閉
     _channel?.sink.close();
 
-    // 3. 修改：根據目前選擇的幣種，動態轉換為小寫並組裝成幣安的 WebSocket 網址
-    final String symbolLower = _currentSymbol.toLowerCase();
-    final String url = "wss://stream.binance.com:9443/ws/$symbolLower@ticker";
+    // 建立幣安多重組合串流網址格式
+    final String streams = _symbols.map((s) => "$s@ticker").join("/");
+    final String url = "wss://stream.binance.com:9443/stream?streams=$streams";
 
     try {
-      print("正在建立 $_currentSymbol WebSocket 連線...");
+      print("正在建立多幣種 Combined WebSocket 連線...");
       _channel = WebSocketChannel.connect(Uri.parse(url));
 
       _channel!.stream.listen(
         (message) {
-          final data = jsonDecode(message);
+          final json = jsonDecode(message);
 
-          // 幣安 ticker 流的當前最新成交價欄位是 'c'
-          if (data['c'] != null) {
-            double price = double.parse(data['c']);
-            _controller.add(price);
+          // 組合串流真實的行情數據存放在 'data' 欄位中
+          if (json['data'] != null) {
+            final data = json['data'];
+            final String symbol = data['s']; // 取得大寫幣種名稱，如 "BTCUSDT"
+            final double price = double.parse(data['c']); // 最新成交價 'c'
+
+            _latestPrices[symbol] = price;
+            _controller.add(_latestPrices); // 廣播最新的全幣種行情快照
           }
         },
         onError: (error) {
           print("WebSocket 錯誤: $error");
-          _reconnect(); // 發生錯誤時重連
+          _reconnect();
         },
         onDone: () {
           print("WebSocket 連線關閉");
-          // 4. 修改：只有在「非手動切換」的被動斷線情況下，才觸發 5 秒延遲重連
-          if (!_isManuallySwitching) {
-            _reconnect();
-          }
+          _reconnect();
         },
       );
     } catch (e) {
@@ -54,27 +58,9 @@ class WebSocketManager {
     }
   }
 
-  // 5. 新增：提供給 UI 呼叫的切換幣種核心方法
-  void switchSymbol(String newSymbol) {
-    if (_currentSymbol == newSymbol) return; // 相同幣種就不重複切換
-
-    print("🔄 正在從 $_currentSymbol 切換至 $newSymbol...");
-
-    _isManuallySwitching = true;
-    _currentSymbol = newSymbol;
-
-    // 掐斷當前連線（這會觸發 onDone，但因為旗標已開，不會進入 5 秒延遲重連）
-    _channel?.sink.close();
-
-    _isManuallySwitching = false;
-
-    // 立刻點火連接新幣種的 Stream！
-    connect();
-  }
-
   void _reconnect() {
     print("嘗試在 5 秒後重連...");
-    Future.delayed(Duration(seconds: 5), () => connect());
+    Future.delayed(const Duration(seconds: 5), () => connect());
   }
 
   void dispose() {

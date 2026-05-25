@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import '../tools/pnl_calculator.dart';
 import '../tools/position_tracker.dart';
-import '../main.dart'; // 確保獲取全域 positionTracker
-import '../data/auth_service.dart'; // 用於登出功能
+import '../main.dart';
+import '../data/auth_service.dart';
+import 'kline.dart'; // 🔥 新增：導入剛剛寫好的獨立 K 線圖元件
 
 class TradeRoom extends StatefulWidget {
   const TradeRoom({super.key});
@@ -12,26 +13,51 @@ class TradeRoom extends StatefulWidget {
 }
 
 class _TradeRoomState extends State<TradeRoom> {
+  // 當前看盤與下單的幣種狀態，預設為 BTCUSDT
+  String _selectedSymbol = "BTCUSDT";
+  final List<String> _availableSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+  KlineIntervalOption _selectedInterval = KlineIntervalOption.oneHour;
+
+  // 當前選擇的槓桿倍數，預設為 20x
+  double _currentLeverage = 20.0;
+
   @override
   void initState() {
     super.initState();
-
-    // 當交易室畫面一建立，立刻通知全域 tracker 去 Firebase 抓取這個使用者的資產與持倉！
-    // WidgetsBinding 的目的是確保畫面首幀渲染後才執行非同步載入，安全不卡頓
+    // 畫面首次渲染後向雲端加載真實使用者數據
     WidgetsBinding.instance.addPostFrameCallback((_) {
       positionTracker.loadUserData();
     });
   }
 
-  // 直接拿全域的 priceStream
-  late final Stream<double> priceStream = positionTracker.priceStream;
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // 在 trade_room.dart 頂部的 AppBar 區塊加入 IconButton：
       appBar: AppBar(
-        title: const Text("BTCUSDT 永續合約模擬"),
+        title: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: _selectedSymbol,
+            dropdownColor: Colors.grey.shade900,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            ),
+            items: _availableSymbols.map((String symbol) {
+              return DropdownMenuItem<String>(
+                value: symbol,
+                child: Text(symbol),
+              );
+            }).toList(),
+            onChanged: (String? newValue) {
+              if (newValue != null) {
+                setState(() {
+                  _selectedSymbol = newValue; // 這裡改變狀態，會引導下面的 KlineView 自動更新
+                });
+              }
+            },
+          ),
+        ),
         actions: [
           ListenableBuilder(
             listenable: positionTracker,
@@ -44,48 +70,61 @@ class _TradeRoomState extends State<TradeRoom> {
               );
             },
           ),
-          // 新增：登出按鈕
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.grey),
-            onPressed: () async {
-              await AuthService().signOut();
-            },
+            onPressed: () async => await AuthService().signOut(),
           ),
           const SizedBox(width: 8),
         ],
       ),
       body: Column(
         children: [
-          // 1. 即時價格看板：直連 StreamBuilder，保證價格絕對瘋狂更新！
-          StreamBuilder<double>(
-            stream: priceStream,
-            builder: (context, snapshot) {
-              final price = snapshot.data ?? positionTracker.currentPrice;
-              return Container(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text("BTCUSDT 標記價格", style: TextStyle(fontSize: 16)),
-                    Text(
-                      "\$${price.toStringAsFixed(2)}",
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: price >= positionTracker.currentPrice
-                            ? Colors.green
-                            : Colors.red,
-                      ),
-                    ),
-                  ],
+          // 1. 🔥 重構點：直接調用剛寫好的獨立 K 線圖 Widget，把目前選擇的幣種傳進去
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+            child: Row(
+              children: [
+                const Text(
+                  "K線週期",
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              );
-            },
+                const SizedBox(width: 12),
+                Expanded(
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: SegmentedButton<KlineIntervalOption>(
+                      showSelectedIcon: false,
+                      segments: KlineIntervalOption.values
+                          .map(
+                            (option) => ButtonSegment<KlineIntervalOption>(
+                              value: option,
+                              label: Text(option.label),
+                            ),
+                          )
+                          .toList(),
+                      selected: {_selectedInterval},
+                      onSelectionChanged: (selection) {
+                        setState(() {
+                          _selectedInterval = selection.first;
+                        });
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          KlineView(
+            symbol: _selectedSymbol,
+            intervalOption: _selectedInterval,
           ),
 
-          const Divider(),
+          const Divider(height: 1),
 
-          // 2. 當前持倉列表：只有持倉陣列改變時才重繪列表框架
+          // 2. 當前持倉合約列表
           Expanded(
             child: ListenableBuilder(
               listenable: positionTracker,
@@ -103,7 +142,7 @@ class _TradeRoomState extends State<TradeRoom> {
             ),
           ),
 
-          // 3. 下單按鈕區：丟進 ListenableBuilder，只要 Tracker 價格快照更新了，按鈕立刻變色解鎖
+          // 3. 槓桿滑桿與下單控制面板
           ListenableBuilder(
             listenable: positionTracker,
             builder: (context, _) => _buildActionPanel(),
@@ -113,17 +152,17 @@ class _TradeRoomState extends State<TradeRoom> {
     );
   }
 
-  // 倉位卡片：內部獨立監聽價格，跳動互不影響
+  // 持倉卡片組件
   Widget _buildPositionCard(int index) {
-    // 防呆：有可能在重繪瞬間 index 已經沒了
-    if (index >= positionTracker.positions.length)
+    if (index >= positionTracker.positions.length) {
       return const SizedBox.shrink();
+    }
     final pos = positionTracker.positions[index];
 
-    return StreamBuilder<double>(
-      stream: priceStream,
-      builder: (context, snapshot) {
-        final currentPrice = snapshot.data ?? positionTracker.currentPrice;
+    return ListenableBuilder(
+      listenable: positionTracker,
+      builder: (context, _) {
+        final currentPrice = positionTracker.getPrice(pos.symbol);
         final validPrice = currentPrice > 0 ? currentPrice : pos.entryPrice;
 
         final pnl = PnlCalculator.calculatePnL(
@@ -140,16 +179,16 @@ class _TradeRoomState extends State<TradeRoom> {
         );
 
         return Card(
-          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.all(14.0),
             child: Column(
               children: [
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      "${pos.side == PositionSide.long ? '做多' : '做空'} ${pos.leverage}x",
+                      "${pos.symbol} · ${pos.side == PositionSide.long ? '做多' : '做空'} ${pos.leverage}x",
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: pos.side == PositionSide.long
@@ -161,13 +200,13 @@ class _TradeRoomState extends State<TradeRoom> {
                       "盈虧: ${pnl.toStringAsFixed(2)} USDT",
                       style: TextStyle(
                         color: pnl >= 0 ? Colors.green : Colors.red,
-                        fontSize: 18,
+                        fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -178,16 +217,17 @@ class _TradeRoomState extends State<TradeRoom> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 SizedBox(
                   width: double.infinity,
+                  height: 36,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.grey.shade800,
                     ),
                     onPressed: () => positionTracker.closePosition(index),
                     child: const Text(
-                      "平倉",
+                      "市價平倉",
                       style: TextStyle(color: Colors.white),
                     ),
                   ),
@@ -200,64 +240,92 @@ class _TradeRoomState extends State<TradeRoom> {
     );
   }
 
-  // 下單面板
+  // 下單面板組件
   Widget _buildActionPanel() {
-    // 直接動態判定 Tracker 的價格是不是大於 0
-    final bool isPriceReady = positionTracker.currentPrice > 0;
+    final double marketPrice = positionTracker.getPrice(_selectedSymbol);
+    final bool isPriceReady = marketPrice > 0;
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: Colors.grey.shade900),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isPriceReady ? Colors.green : Colors.grey,
+          // 槓桿 Slider 滑桿控制
+          Row(
+            children: [
+              Text(
+                "槓桿倍數: ${_currentLeverage.toInt()}x",
+                style: const TextStyle(
+                  color: Colors.amber,
+                  fontWeight: FontWeight.bold,
+                ),
               ),
-              onPressed: !isPriceReady
-                  ? null
-                  : () {
-                      positionTracker.openPosition(
-                        Position(
-                          symbol: "BTCUSDT",
-                          entryPrice: positionTracker.currentPrice,
-                          quantity: 0.1,
-                          leverage: 20,
-                          side: PositionSide.long,
-                        ),
-                      );
-                    },
-              child: Text(
-                isPriceReady ? "市價買入 / 做多" : "等待即時價格...",
-                style: const TextStyle(color: Colors.white),
+              Expanded(
+                child: Slider(
+                  value: _currentLeverage,
+                  min: 1.0,
+                  max: 100.0,
+                  divisions: 99,
+                  activeColor: Colors.amber,
+                  inactiveColor: Colors.grey.shade700,
+                  label: "${_currentLeverage.toInt()}x",
+                  onChanged: (value) {
+                    setState(() {
+                      _currentLeverage = value;
+                    });
+                  },
+                ),
               ),
-            ),
+            ],
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: isPriceReady ? Colors.red : Colors.grey,
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isPriceReady ? Colors.green : Colors.grey,
+                  ),
+                  onPressed: !isPriceReady
+                      ? null
+                      : () {
+                          positionTracker.openPosition(
+                            Position(
+                              symbol: _selectedSymbol,
+                              entryPrice: marketPrice,
+                              quantity: 0.1,
+                              leverage: _currentLeverage.toInt(),
+                              side: PositionSide.long,
+                            ),
+                          );
+                        },
+                  child: Text(isPriceReady ? "市價做多" : "連線中..."),
+                ),
               ),
-              onPressed: !isPriceReady
-                  ? null
-                  : () {
-                      positionTracker.openPosition(
-                        Position(
-                          symbol: "BTCUSDT",
-                          entryPrice: positionTracker.currentPrice,
-                          quantity: 0.1,
-                          leverage: 20,
-                          side: PositionSide.short,
-                        ),
-                      );
-                    },
-              child: Text(
-                isPriceReady ? "市價賣出 / 做空" : "等待即時價格...",
-                style: const TextStyle(color: Colors.white),
+              const SizedBox(width: 10),
+              Expanded(
+                child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isPriceReady ? Colors.red : Colors.grey,
+                  ),
+                  onPressed: !isPriceReady
+                      ? null
+                      : () {
+                          positionTracker.openPosition(
+                            Position(
+                              symbol: _selectedSymbol,
+                              entryPrice: marketPrice,
+                              quantity: 0.1,
+                              leverage: _currentLeverage.toInt(),
+                              side: PositionSide.short,
+                            ),
+                          );
+                        },
+                  child: Text(isPriceReady ? "市價做空" : "連線中..."),
+                ),
               ),
-            ),
+            ],
           ),
         ],
       ),
