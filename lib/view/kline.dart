@@ -60,7 +60,10 @@ class _KlineViewState extends State<KlineView> {
   late KlineSpec _currentSpec;
   bool _isChartLoading = true;
   bool _hasNetworkError = false;
-  CandleModel? _latestCandle;
+  int? _lastCandleMinute;
+  double? _currentOpen;
+  double? _currentHigh;
+  double? _currentLow;
 
   @override
   void initState() {
@@ -89,7 +92,11 @@ class _KlineViewState extends State<KlineView> {
       );
       setState(() {
         _currentSpec = _buildSpec();
-        _latestCandle = null;
+        // 💡 週期或幣種改變時，必須把前一個週期的時間戳暫存清空，交由網絡層重新繼承
+        _lastCandleMinute = null;
+        _currentOpen = null;
+        _currentHigh = null;
+        _currentLow = null;
       });
       _fetchHistoryKlines();
     }
@@ -104,41 +111,40 @@ class _KlineViewState extends State<KlineView> {
 
   void _onPriceSnapshotUpdate() {
     final currentPrice = positionTracker.getPrice(widget.symbol);
-    if (currentPrice <= 0 || _isChartLoading || _hasNetworkError) {
-      return;
+
+    if (currentPrice > 0 && !_isChartLoading && !_hasNetworkError) {
+      // 🔥 🔥 終極修正點：調用你寫好的 _alignTimestamp 方法，根據當前選擇的週期動態對齊起點時間戳
+      int alignedTimestamp = _alignTimestamp(
+        DateTime.now().millisecondsSinceEpoch,
+      );
+
+      if (_lastCandleMinute == null || _lastCandleMinute != alignedTimestamp) {
+        // 進入了全新的週期區間（例如從舊的一天跨入新的一天，或新的一小時）
+        _lastCandleMinute = alignedTimestamp;
+        _currentOpen = currentPrice;
+        _currentHigh = currentPrice;
+        _currentLow = currentPrice;
+      } else {
+        // 還在目前的週期壽命內，動態去擴張與更新影線
+        if (_currentHigh != null && currentPrice > _currentHigh!) {
+          _currentHigh = currentPrice;
+        }
+        if (_currentLow != null && currentPrice < _currentLow!) {
+          _currentLow = currentPrice;
+        }
+      }
+
+      final liveCandle = CandleModel(
+        timestamp: _lastCandleMinute!,
+        open: _currentOpen ?? currentPrice,
+        high: _currentHigh ?? currentPrice,
+        low: _currentLow ?? currentPrice,
+        close: currentPrice,
+        volume: 0,
+      );
+
+      _klineController.updateKlineData(_currentSpec, [liveCandle]);
     }
-
-    final latestCandle = _latestCandle;
-    if (latestCandle == null) {
-      return;
-    }
-
-    final currentBucket = _alignTimestamp(DateTime.now().millisecondsSinceEpoch);
-    final latestTimestamp = (latestCandle.timestamp as num).toInt();
-    final latestBucket = _alignTimestamp(latestTimestamp);
-    final latestHigh = (latestCandle.high as num).toDouble();
-    final latestLow = (latestCandle.low as num).toDouble();
-
-    final liveCandle = currentBucket > latestBucket
-        ? CandleModel(
-            timestamp: currentBucket,
-            open: latestCandle.close,
-            high: currentPrice,
-            low: currentPrice,
-            close: currentPrice,
-            volume: 0,
-          )
-        : CandleModel(
-            timestamp: latestTimestamp,
-            open: latestCandle.open,
-            high: currentPrice > latestHigh ? currentPrice : latestHigh,
-            low: currentPrice < latestLow ? currentPrice : latestLow,
-            close: currentPrice,
-            volume: latestCandle.volume,
-          );
-
-    _latestCandle = liveCandle;
-    _klineController.updateKlineData(_currentSpec, [liveCandle]);
   }
 
   KlineSpec _buildSpec() {
@@ -171,7 +177,6 @@ class _KlineViewState extends State<KlineView> {
     setState(() {
       _isChartLoading = true;
       _hasNetworkError = false;
-      _latestCandle = null;
     });
 
     try {
@@ -187,7 +192,7 @@ class _KlineViewState extends State<KlineView> {
 
       if (response.statusCode == 200 && mounted) {
         final List<dynamic> jsonList = jsonDecode(response.body);
-        final historyList = <CandleModel>[];
+        var historyList = <CandleModel>[];
 
         for (final item in jsonList) {
           historyList.add(
@@ -202,8 +207,18 @@ class _KlineViewState extends State<KlineView> {
           );
         }
 
+        // Binance API 回傳的 K 線是從舊到新，反轉成從新到舊以符合繪圖矩陣
+        historyList = historyList.reversed.toList();
+
         if (historyList.isNotEmpty) {
-          _latestCandle = historyList.last;
+          final latestCandle = historyList.first;
+          _lastCandleMinute = int.tryParse(latestCandle.timestamp.toString());
+          _currentOpen = double.tryParse(latestCandle.open.toString());
+          _currentHigh = double.tryParse(latestCandle.high.toString());
+          _currentLow = double.tryParse(latestCandle.low.toString());
+          debugPrint(
+            "✅ [狀態繼承成功] 週期: ${widget.intervalOption.label}, 完美對齊標準整點: $_lastCandleMinute, 繼承初始開盤價: $_currentOpen",
+          );
         }
 
         debugPrint(
@@ -233,10 +248,7 @@ class _KlineViewState extends State<KlineView> {
       color: const Color(0xFF121212),
       child: Stack(
         children: [
-          FlexiKlineWidget(
-            controller: _klineController,
-            autoAdaptLayout: true,
-          ),
+          FlexiKlineWidget(controller: _klineController, autoAdaptLayout: true),
           if (_hasNetworkError)
             Container(
               color: Colors.black87,
