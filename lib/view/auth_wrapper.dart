@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../data/auth_service.dart';
-import 'trade_room.dart';
+import 'home_page.dart';
 import 'login_room.dart';
 
 class AuthWrapper extends StatelessWidget {
@@ -23,7 +23,7 @@ class AuthWrapper extends StatelessWidget {
 
         // 2. 確定有用戶資料 -> 前往交易室
         if (snapshot.hasData && snapshot.data != null) {
-          return const TradeRoom();
+          return const HomePage();
         }
 
         // 3. 沒資料或未登入 -> 前往登入頁面
