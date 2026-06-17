@@ -1,9 +1,9 @@
-import 'package:flutter/material.dart';
+﻿import 'package:flutter/material.dart';
 import '../tools/pnl_calculator.dart';
 import '../tools/position_tracker.dart';
 import '../main.dart';
 import '../data/auth_service.dart';
-import 'kline.dart'; // 🔥 新增：導入剛剛寫好的獨立 K 線圖元件
+import 'kline.dart';
 
 class TradeRoom extends StatefulWidget {
   const TradeRoom({super.key});
@@ -13,21 +13,27 @@ class TradeRoom extends StatefulWidget {
 }
 
 class _TradeRoomState extends State<TradeRoom> {
-  // 當前看盤與下單的幣種狀態，預設為 BTCUSDT
   String _selectedSymbol = "BTCUSDT";
   final List<String> _availableSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
   KlineIntervalOption _selectedInterval = KlineIntervalOption.oneHour;
 
-  // 當前選擇的槓桿倍數，預設為 20x
   double _currentLeverage = 20.0;
+  final TextEditingController _amountController = TextEditingController(
+    text: "100",
+  );
 
   @override
   void initState() {
     super.initState();
-    // 畫面首次渲染後向雲端加載真實使用者數據
     WidgetsBinding.instance.addPostFrameCallback((_) {
       positionTracker.loadUserData();
     });
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
   }
 
   @override
@@ -52,7 +58,7 @@ class _TradeRoomState extends State<TradeRoom> {
             onChanged: (String? newValue) {
               if (newValue != null) {
                 setState(() {
-                  _selectedSymbol = newValue; // 這裡改變狀態，會引導下面的 KlineView 自動更新
+                  _selectedSymbol = newValue;
                 });
               }
             },
@@ -79,13 +85,12 @@ class _TradeRoomState extends State<TradeRoom> {
       ),
       body: Column(
         children: [
-          // 1. 🔥 重構點：直接調用剛寫好的獨立 K 線圖 Widget，把目前選擇的幣種傳進去
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
             child: Row(
               children: [
                 const Text(
-                  "K線週期",
+                  "K 線週期",
                   style: TextStyle(
                     color: Colors.white70,
                     fontWeight: FontWeight.w600,
@@ -117,14 +122,11 @@ class _TradeRoomState extends State<TradeRoom> {
               ],
             ),
           ),
-          KlineView(
-            symbol: _selectedSymbol,
-            intervalOption: _selectedInterval,
-          ),
+          KlineView(symbol: _selectedSymbol, intervalOption: _selectedInterval),
 
           const Divider(height: 1),
 
-          // 2. 當前持倉合約列表
+          // 2. 當前持倉列表
           Expanded(
             child: ListenableBuilder(
               listenable: positionTracker,
@@ -142,7 +144,7 @@ class _TradeRoomState extends State<TradeRoom> {
             ),
           ),
 
-          // 3. 槓桿滑桿與下單控制面板
+          // 3. 下單面板
           ListenableBuilder(
             listenable: positionTracker,
             builder: (context, _) => _buildActionPanel(),
@@ -152,7 +154,6 @@ class _TradeRoomState extends State<TradeRoom> {
     );
   }
 
-  // 持倉卡片組件
   Widget _buildPositionCard(int index) {
     if (index >= positionTracker.positions.length) {
       return const SizedBox.shrink();
@@ -174,8 +175,9 @@ class _TradeRoomState extends State<TradeRoom> {
 
         final liqPrice = PnlCalculator.calculateLiquidationPrice(
           entryPrice: pos.entryPrice,
-          leverage: pos.leverage,
+          quantity: pos.quantity,
           side: pos.side,
+          isolatedMargin: pos.isolatedMargin,
         );
 
         return Card(
@@ -188,7 +190,7 @@ class _TradeRoomState extends State<TradeRoom> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Text(
-                      "${pos.symbol} · ${pos.side == PositionSide.long ? '做多' : '做空'} ${pos.leverage}x",
+                      "${pos.symbol} ${pos.side == PositionSide.long ? '多單' : '空單'} ${pos.leverage}x",
                       style: TextStyle(
                         fontWeight: FontWeight.bold,
                         color: pos.side == PositionSide.long
@@ -240,18 +242,74 @@ class _TradeRoomState extends State<TradeRoom> {
     );
   }
 
-  // 下單面板組件
   Widget _buildActionPanel() {
     final double marketPrice = positionTracker.getPrice(_selectedSymbol);
     final bool isPriceReady = marketPrice > 0;
+    final double inputAmount = double.tryParse(_amountController.text) ?? 0.0;
+    final double calculatedQuantity = isPriceReady && inputAmount > 0
+        ? (inputAmount * _currentLeverage) / marketPrice
+        : 0.0;
+
+    void openOrder(PositionSide side) {
+      positionTracker.openPosition(
+        Position(
+          symbol: _selectedSymbol,
+          entryPrice: marketPrice,
+          quantity: calculatedQuantity,
+          leverage: _currentLeverage.toInt(),
+          side: side,
+          isolatedMargin: inputAmount,
+        ),
+      );
+    }
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(color: Colors.grey.shade900),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 槓桿 Slider 滑桿控制
+          Row(
+            children: [
+              const Text(
+                "開倉金額",
+                style: TextStyle(
+                  color: Colors.white70,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: TextField(
+                  controller: _amountController,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  style: const TextStyle(
+                    color: Colors.amber,
+                    fontFamily: 'monospace',
+                    fontWeight: FontWeight.bold,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: "輸入 USDT 金額",
+                    suffixText: "USDT",
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    filled: true,
+                    fillColor: Colors.white.withOpacity(0.05),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
           Row(
             children: [
               Text(
@@ -279,50 +337,57 @@ class _TradeRoomState extends State<TradeRoom> {
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10, left: 4),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  "預估開倉數量: ${calculatedQuantity.toStringAsFixed(4)} ${_selectedSymbol.replaceAll('USDT', '')}",
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+                Text(
+                  "逐倉保證金: ${inputAmount.toStringAsFixed(2)} USDT",
+                  style: const TextStyle(
+                    color: Colors.grey,
+                    fontSize: 12,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+          ),
           Row(
             children: [
               Expanded(
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: isPriceReady ? Colors.green : Colors.grey,
+                    backgroundColor: isPriceReady && inputAmount > 0
+                        ? Colors.green
+                        : Colors.grey,
                   ),
-                  onPressed: !isPriceReady
+                  onPressed: !isPriceReady || inputAmount <= 0
                       ? null
-                      : () {
-                          positionTracker.openPosition(
-                            Position(
-                              symbol: _selectedSymbol,
-                              entryPrice: marketPrice,
-                              quantity: 0.1,
-                              leverage: _currentLeverage.toInt(),
-                              side: PositionSide.long,
-                            ),
-                          );
-                        },
-                  child: Text(isPriceReady ? "市價做多" : "連線中..."),
+                      : () => openOrder(PositionSide.long),
+                  child: Text(isPriceReady ? "開多" : "讀取價格中..."),
                 ),
               ),
               const SizedBox(width: 10),
               Expanded(
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: isPriceReady ? Colors.red : Colors.grey,
+                    backgroundColor: isPriceReady && inputAmount > 0
+                        ? Colors.red
+                        : Colors.grey,
                   ),
-                  onPressed: !isPriceReady
+                  onPressed: !isPriceReady || inputAmount <= 0
                       ? null
-                      : () {
-                          positionTracker.openPosition(
-                            Position(
-                              symbol: _selectedSymbol,
-                              entryPrice: marketPrice,
-                              quantity: 0.1,
-                              leverage: _currentLeverage.toInt(),
-                              side: PositionSide.short,
-                            ),
-                          );
-                        },
-                  child: Text(isPriceReady ? "市價做空" : "連線中..."),
+                      : () => openOrder(PositionSide.short),
+                  child: Text(isPriceReady ? "開空" : "讀取價格中..."),
                 ),
               ),
             ],

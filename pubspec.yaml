@@ -17,11 +17,34 @@ dependencies:
   google_sign_in: ^6.2.1
   flexi_kline: ^2.1.1
   flexi_formatter: ^2.0.1
+  video_player: ^2.9.0
+  local_auth: ^2.3.0 # 💡 移到這裡！這樣 App 執行時才讀得到
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0
+  flutter_launcher_icons: ^0.13.1 # 💡 確保 dev 區有下載到這個產生圖標的工具
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/splash_animation.mp4 # 💡 記得跟你的 splash_animate.dart 字串保持一致！
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/icon/app_icon.png"
+  min_sdk_android: 21
+  web:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    background_color: "#111111"
+    theme_color: "#111111"
+  windows:
+    generate: true
+    image_path: "assets/icon/app_icon.png"
+    icon_size: 48
+  macos:
+    generate: true
+    image_path: "assets/icon/app_icon.png"

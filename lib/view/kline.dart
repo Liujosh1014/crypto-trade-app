@@ -243,7 +243,7 @@ class _KlineViewState extends State<KlineView> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 320,
+      height: 255,
       width: double.infinity,
       color: const Color(0xFF121212),
       child: Stack(
