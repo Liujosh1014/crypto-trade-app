@@ -13,23 +13,54 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  int _currentIndex = 0; // 預設停在第一個「首頁大廳」
-
-  // 全域連動的標的狀態
+  int _currentIndex = 0;
   String _selectedSymbol = "BTCUSDT";
-  final List<String> _availableSymbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
-  double _currentLeverage = 20.0; // 槓桿倍數狀態
+
+  // 💡 新增：用來儲存使用者目前輸入的搜尋關鍵字
+  String _searchQuery = "";
+
+  final List<String> _availableSymbols = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "ADAUSDT",
+    "XRPUSDT",
+    "DOGEUSDT",
+    "DOTUSDT",
+    "UNIUSDT",
+    "LTCUSDT",
+    "LINKUSDT",
+    "BCHUSDT",
+    "MATICUSDT",
+    "AVAXUSDT",
+  ];
+  double _currentLeverage = 20.0;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      positionTracker.loadFromFirestore();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    // 💡 核心過濾邏輯：當在行情大廳且有輸入文字時，動態過濾顯示的幣種
+    final filteredSymbols = _availableSymbols
+        .where(
+          (symbol) => symbol.toLowerCase().contains(_searchQuery.toLowerCase()),
+        )
+        .toList();
+
     return Scaffold(
-      // ==================== 1. 動態 AppBar（依分頁展示不同標題） ====================
       appBar: AppBar(
         backgroundColor: const Color(0xFF161616),
         elevation: 0,
         title: _currentIndex == 0
             ? const Text(
-                "市場行情",
+                "行情大廳",
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               )
             : _currentIndex == 1
@@ -42,7 +73,7 @@ class _HomePageState extends State<HomePage> {
                 ),
               )
             : const Text(
-                "資產帳戶",
+                "資產錢包",
                 style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
         actions: [
@@ -54,10 +85,9 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
 
-      // ==================== 2. 使用 IndexedStack 鎖定分頁狀態 ====================
       body: Column(
         children: [
-          // 🔥 核心重構點：將原本 8 像素的空 Container 改造成高質感動態資產看板
+          // 頂部錢包餘額顯示欄
           ListenableBuilder(
             listenable: positionTracker,
             builder: (context, _) {
@@ -75,7 +105,6 @@ class _HomePageState extends State<HomePage> {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // 左側：圖標與文字
                     Row(
                       children: [
                         const Icon(
@@ -86,7 +115,7 @@ class _HomePageState extends State<HomePage> {
                         const SizedBox(width: 8),
                         Text(
                           _currentIndex == 0
-                              ? "總資產估值 (Portfolio)"
+                              ? "投資組合 (Portfolio)"
                               : "可用餘額 (Available)",
                           style: const TextStyle(
                             color: Colors.grey,
@@ -96,14 +125,13 @@ class _HomePageState extends State<HomePage> {
                         ),
                       ],
                     ),
-                    // 右側：實時跟隨 WebSocket 與下單盈虧動態跳動的資產數字
                     Text(
                       "${positionTracker.money.toStringAsFixed(2)} USDT",
                       style: const TextStyle(
                         color: Colors.amber,
                         fontSize: 15,
                         fontWeight: FontWeight.bold,
-                        fontFamily: 'monospace', // 等寬字體，防止數字跳動時文字抖動
+                        fontFamily: 'monospace',
                       ),
                     ),
                   ],
@@ -112,24 +140,32 @@ class _HomePageState extends State<HomePage> {
             },
           ),
 
-          // 🔥 核心重構點：必須使用 Expanded 包裹 IndexedStack，
-          // 讓分頁能夠完美、安全地吃掉除去頂部資產看板後的所有剩餘螢幕高度！
+          // 💡 關鍵修正：如果是「行情大廳 (Index 0)」，就在頂部塞入 SearchBar
+          if (_currentIndex == 0)
+            _SearchBar(
+              onSymbolChanged: (val) {
+                setState(() {
+                  _searchQuery = val; // 💡 更新關鍵字，觸發 filteredSymbols 重新計算與 UI 刷新
+                });
+              },
+            ),
+
           Expanded(
             child: IndexedStack(
               index: _currentIndex,
               children: [
-                // 分頁 0：純淨自選首頁 (只顯示幣種與即時價)
+                // 行情大廳分頁
                 _HomeDashboardTab(
-                  coinList: _availableSymbols,
+                  coinList: filteredSymbols, // 💡 傳入過濾後的清單，而非原始清單
                   onSymbolSelect: (symbol) {
                     setState(() {
-                      _selectedSymbol = symbol; // 變更全域標的
-                      _currentIndex = 1; // 自動轉場滑入「合約交易」分頁
+                      _selectedSymbol = symbol;
+                      _currentIndex = 1; // 跳轉到交易頁
                     });
                   },
                 ),
 
-                // 分頁 1：升級版專業合約交易室 (內含 K 線與週期切換)
+                // 交易分頁
                 _TradeTab(
                   symbol: _selectedSymbol,
                   currentLeverage: _currentLeverage,
@@ -137,7 +173,6 @@ class _HomePageState extends State<HomePage> {
                       setState(() => _currentLeverage = val),
                 ),
 
-                // 分頁 2：個人帳戶
                 const _WalletTab(),
               ],
             ),
@@ -145,7 +180,6 @@ class _HomePageState extends State<HomePage> {
         ],
       ),
 
-      // ==================== 3. 質感暗色底部導航列 ====================
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         selectedItemColor: Colors.amber,
@@ -156,18 +190,16 @@ class _HomePageState extends State<HomePage> {
         unselectedFontSize: 11,
         onTap: (index) => setState(() => _currentIndex = index),
         items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.trending_up), label: '市場行情'),
-          BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: '合約交易'),
-          BottomNavigationBarItem(icon: Icon(Icons.wallet), label: '資產帳戶'),
+          BottomNavigationBarItem(icon: Icon(Icons.trending_up), label: '行情'),
+          BottomNavigationBarItem(icon: Icon(Icons.bar_chart), label: '交易'),
+          BottomNavigationBarItem(icon: Icon(Icons.wallet), label: '錢包'),
         ],
       ),
     );
   }
 }
 
-// ============================================================================
-// 📊 分頁 0：純淨首頁大廳 (Watchlist Dashboard) - 只顯示幣種與當前價格
-// ============================================================================
+/// 💡 修正：乾淨的行情列表元件，內部不再錯置 SearchBar
 class _HomeDashboardTab extends StatelessWidget {
   final List<String> coinList;
   final ValueChanged<String> onSymbolSelect;
@@ -182,6 +214,12 @@ class _HomeDashboardTab extends StatelessWidget {
     return ListenableBuilder(
       listenable: positionTracker,
       builder: (context, _) {
+        if (coinList.isEmpty) {
+          return const Center(
+            child: Text("找不到相關幣種", style: TextStyle(color: Colors.grey)),
+          );
+        }
+
         return ListView.separated(
           padding: const EdgeInsets.symmetric(vertical: 8),
           itemCount: coinList.length,
@@ -192,7 +230,7 @@ class _HomeDashboardTab extends StatelessWidget {
             final price = positionTracker.getPrice(symbol);
 
             return InkWell(
-              onTap: () => onSymbolSelect(symbol), // 點擊項目觸發場景跳轉
+              onTap: () => onSymbolSelect(symbol),
               child: Padding(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 16,
@@ -201,7 +239,6 @@ class _HomeDashboardTab extends StatelessWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    // 左側：幣種名稱與永續合約標籤
                     Row(
                       children: [
                         const Icon(
@@ -232,7 +269,7 @@ class _HomeDashboardTab extends StatelessWidget {
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: const Text(
-                                "永續",
+                                "現貨",
                                 style: TextStyle(
                                   color: Colors.grey,
                                   fontSize: 10,
@@ -244,7 +281,6 @@ class _HomeDashboardTab extends StatelessWidget {
                         ),
                       ],
                     ),
-                    // 右側：純淨跳動價格字卡
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
@@ -257,12 +293,12 @@ class _HomeDashboardTab extends StatelessWidget {
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
-                        price > 0 ? price.toStringAsFixed(2) : "連線中...",
+                        price > 0 ? price.toStringAsFixed(2) : "載入中...",
                         style: TextStyle(
                           color: price > 0 ? Colors.greenAccent : Colors.grey,
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
-                          fontFamily: 'monospace', // 等寬字體防抖動
+                          fontFamily: 'monospace',
                         ),
                       ),
                     ),
@@ -277,9 +313,78 @@ class _HomeDashboardTab extends StatelessWidget {
   }
 }
 
-// ============================================================================
-// ⚡ 分頁 1：升級版合約交易室 (包含 K 線圖與獨立週期切換)
-// ============================================================================
+class _SearchBar extends StatefulWidget {
+  final ValueChanged<String> onSymbolChanged;
+
+  const _SearchBar({super.key, required this.onSymbolChanged});
+
+  @override
+  State<_SearchBar> createState() => _SearchBarState();
+}
+
+class _SearchBarState extends State<_SearchBar> {
+  // 💡 引入 Controller 來精準控制輸入框的文字與清空動作
+  final TextEditingController _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose(); // 記得銷毀控制器釋放記憶體
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      color: const Color(0xFF161616),
+      child: Row(
+        children: [
+          const Icon(Icons.search, color: Colors.grey, size: 20),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextField(
+              controller: _controller, // 💡 綁定 Controller
+              onChanged: widget.onSymbolChanged,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                hintText: "搜尋幣種 (例如：BTCUSDT)",
+                hintStyle: const TextStyle(color: Colors.grey),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(6),
+                  borderSide: BorderSide.none,
+                ),
+                filled: true,
+                fillColor: Colors.white10,
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 0,
+                ),
+
+                // 💡 新增：當輸入框有字時，顯示右側的「清除按鈕」
+                suffixIcon: _controller.text.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(
+                          Icons.cancel,
+                          color: Colors.grey,
+                          size: 18,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _controller.clear(); // 1. 清空輸入框文字
+                          });
+                          widget.onSymbolChanged(''); // 2. 傳遞空字串給父層，讓列表變回全部幣種
+                        },
+                      )
+                    : null,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TradeTab extends StatefulWidget {
   final String symbol;
   final double currentLeverage;
@@ -296,17 +401,23 @@ class _TradeTab extends StatefulWidget {
 }
 
 class _TradeTabState extends State<_TradeTab> {
-  // 讓交易室自主控制看盤週期，預設為 1h（1小時線）
   KlineIntervalOption _selectedInterval = KlineIntervalOption.oneHour;
+  final TextEditingController _amountController = TextEditingController(
+    text: "100",
+  );
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
-        // 1. 🔥 K 線看盤組件完美移居至此！並與選中的動態週期綁定
         KlineView(symbol: widget.symbol, intervalOption: _selectedInterval),
 
-        // 2. 高級內建時間週期切換橫列
         Container(
           height: 36,
           decoration: const BoxDecoration(
@@ -320,7 +431,7 @@ class _TradeTabState extends State<_TradeTab> {
             children: KlineIntervalOption.values.map((option) {
               bool isActive = _selectedInterval == option;
               String labelName = option == KlineIntervalOption.oneMinute
-                  ? "分時"
+                  ? "1分"
                   : option == KlineIntervalOption.oneHour
                   ? "1小時"
                   : option == KlineIntervalOption.fourHours
@@ -348,7 +459,6 @@ class _TradeTabState extends State<_TradeTab> {
           ),
         ),
 
-        // 3. 持倉合約卡片動態列表
         Expanded(
           child: ListenableBuilder(
             listenable: positionTracker,
@@ -369,7 +479,6 @@ class _TradeTabState extends State<_TradeTab> {
           ),
         ),
 
-        // 4. 固定的下單操作控制面板
         ListenableBuilder(
           listenable: positionTracker,
           builder: (context, _) => _buildActionPanel(),
@@ -394,8 +503,9 @@ class _TradeTabState extends State<_TradeTab> {
 
     final liqPrice = PnlCalculator.calculateLiquidationPrice(
       entryPrice: pos.entryPrice,
-      leverage: pos.leverage,
+      quantity: pos.quantity,
       side: pos.side,
+      isolatedMargin: pos.isolatedMargin,
     );
 
     return Card(
@@ -409,7 +519,7 @@ class _TradeTabState extends State<_TradeTab> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  "${pos.symbol} · ${pos.side == PositionSide.long ? '做多' : '做空'} ${pos.leverage}x",
+                  "${pos.symbol} ${pos.side == PositionSide.long ? '多單' : '空單'} ${pos.leverage}x",
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     color: pos.side == PositionSide.long
@@ -432,11 +542,11 @@ class _TradeTabState extends State<_TradeTab> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  "開倉均價: ${pos.entryPrice.toStringAsFixed(2)}",
+                  "開倉價: ${pos.entryPrice.toStringAsFixed(2)}",
                   style: const TextStyle(fontSize: 12, color: Colors.white70),
                 ),
                 Text(
-                  "強平價格: ${liqPrice.toStringAsFixed(2)}",
+                  "強平價: ${liqPrice.toStringAsFixed(2)}",
                   style: const TextStyle(fontSize: 12, color: Colors.orange),
                 ),
               ],
@@ -451,7 +561,7 @@ class _TradeTabState extends State<_TradeTab> {
                 ),
                 onPressed: () => positionTracker.closePosition(index),
                 child: const Text(
-                  "市價全平",
+                  "市價平倉",
                   style: TextStyle(color: Colors.white, fontSize: 12),
                 ),
               ),
@@ -465,6 +575,23 @@ class _TradeTabState extends State<_TradeTab> {
   Widget _buildActionPanel() {
     final double marketPrice = positionTracker.getPrice(widget.symbol);
     final bool isPriceReady = marketPrice > 0;
+    final double inputAmount = double.tryParse(_amountController.text) ?? 0.0;
+    final double calculatedQuantity = isPriceReady && inputAmount > 0
+        ? (inputAmount * widget.currentLeverage) / marketPrice
+        : 0.0;
+
+    void openOrder(PositionSide side) {
+      positionTracker.openPosition(
+        Position(
+          symbol: widget.symbol,
+          entryPrice: marketPrice,
+          quantity: calculatedQuantity,
+          leverage: widget.currentLeverage.toInt(),
+          side: side,
+          isolatedMargin: inputAmount,
+        ),
+      );
+    }
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -474,7 +601,53 @@ class _TradeTabState extends State<_TradeTab> {
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Row(
+            children: [
+              const Text(
+                "開倉金額",
+                style: TextStyle(
+                  color: Colors.grey,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: SizedBox(
+                  height: 38,
+                  child: TextField(
+                    controller: _amountController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    style: const TextStyle(
+                      color: Colors.amber,
+                      fontFamily: 'monospace',
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: "輸入 USDT 金額",
+                      suffixText: "USDT",
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 0,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white.withOpacity(0.04),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                    ),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
           Row(
             children: [
               Text(
@@ -498,29 +671,44 @@ class _TradeTabState extends State<_TradeTab> {
               ),
             ],
           ),
-          const SizedBox(height: 6),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12, left: 2),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  "預估數量: ${calculatedQuantity.toStringAsFixed(4)} ${widget.symbol.replaceAll('USDT', '')}",
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+                Text(
+                  "逐倉保證金: ${inputAmount.toStringAsFixed(2)} USDT",
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              ],
+            ),
+          ),
           Row(
             children: [
               Expanded(
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: isPriceReady ? Colors.green : Colors.grey,
+                    backgroundColor: isPriceReady && inputAmount > 0
+                        ? Colors.green
+                        : Colors.grey,
                   ),
-                  onPressed: !isPriceReady
+                  onPressed: !isPriceReady || inputAmount <= 0
                       ? null
-                      : () {
-                          positionTracker.openPosition(
-                            Position(
-                              symbol: widget.symbol,
-                              entryPrice: marketPrice,
-                              quantity: 0.1,
-                              leverage: widget.currentLeverage.toInt(),
-                              side: PositionSide.long,
-                            ),
-                          );
-                        },
+                      : () => openOrder(PositionSide.long),
                   child: Text(
-                    isPriceReady ? "市價做多 (Long)" : "連線中...",
+                    isPriceReady ? "開多 (Long)" : "讀取價格中...",
                     style: const TextStyle(color: Colors.white),
                   ),
                 ),
@@ -529,23 +717,15 @@ class _TradeTabState extends State<_TradeTab> {
               Expanded(
                 child: ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: isPriceReady ? Colors.red : Colors.grey,
+                    backgroundColor: isPriceReady && inputAmount > 0
+                        ? Colors.red
+                        : Colors.grey,
                   ),
-                  onPressed: !isPriceReady
+                  onPressed: !isPriceReady || inputAmount <= 0
                       ? null
-                      : () {
-                          positionTracker.openPosition(
-                            Position(
-                              symbol: widget.symbol,
-                              entryPrice: marketPrice,
-                              quantity: 0.1,
-                              leverage: widget.currentLeverage.toInt(),
-                              side: PositionSide.short,
-                            ),
-                          );
-                        },
+                      : () => openOrder(PositionSide.short),
                   child: Text(
-                    isPriceReady ? "市價做空 (Short)" : "連線中...",
+                    isPriceReady ? "開空 (Short)" : "讀取價格中...",
                     style: const TextStyle(color: Colors.white),
                   ),
                 ),
@@ -558,9 +738,6 @@ class _TradeTabState extends State<_TradeTab> {
   }
 }
 
-// ============================================================================
-// 💰 分頁 2：個人資產賬戶中心 (Wallet Tab)
-// ============================================================================
 class _WalletTab extends StatelessWidget {
   const _WalletTab();
 
@@ -580,7 +757,7 @@ class _WalletTab extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               const Text(
-                "合約賬戶淨資產估值",
+                "錢包餘額",
                 style: TextStyle(color: Colors.grey, fontSize: 13),
               ),
               const SizedBox(height: 6),
@@ -603,7 +780,7 @@ class _WalletTab extends StatelessWidget {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  "目前動態監聽持倉數: ${positionTracker.positions.length} 筆",
+                  "目前持倉數量: ${positionTracker.positions.length} 筆",
                   style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ),
